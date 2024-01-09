@@ -1,251 +1,128 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+import math
 
-import requests, os
-from gwpy.timeseries import TimeSeries
-from gwosc.locate import get_urls
-from gwosc import datasets
-from gwosc.api import fetch_event_json
+# IN & F rates
+insurance_rates = {
+    (5000, 10000.1): {3: 0.025, 6: 0.035, 9: 0.045, 12: 0.05},
+    (10001, 20000.1): {3: 0.035, 6: 0.055, 9: 0.065, 12: 0.08},
+    (20001, 30000.1): {3: 0.035, 6: 0.055, 9: 0.065, 12: 0.07},
+    (30001, 40000.1): {3: 0.035, 6: 0.055, 9: 0.075, 12: 0.08},
+    (40001, 50000.1): {3: 0.035, 6: 0.055, 9: 0.075, 12: 0.08},
+    (50001, 60000.1): {3: 0.035, 6: 0.055, 9: 0.075, 12: 0.08},
+    (60001, 70000.1): {3: 0.045, 6: 0.055, 9: 0.085, 12: 0.09},
+    (70001, 80000.1): {3: 0.045, 6: 0.075, 9: 0.095, 12: 0.11},
+    (80001, 100000.1): {3: 0.055, 6: 0.085, 9: 0.105, 12: 0.12},
+    (100001, 200000.1): {3: 0.075, 6: 0.115, 9: 0.135, 12: 0.16},
+    (200001, 300000.1): {3: 0.085, 6: 0.125, 9: 0.145, 12: 0.16},
+    (300001, 400000.1): {3: 0.085, 6: 0.125, 9: 0.145, 12: 0.16},
+    (400001, 1000000): {3: 0.085, 6: 0.125, 9: 0.145, 12: 0.16}
+}
 
-from copy import deepcopy
-import base64
+financing_fee_rates = {
+    "B2B": {3: 0.075, 6: 0.15, 9: 0.225, 12: 0.30},
+    "General": {3: 0.075, 6: 0.15, 9: 0.225, 12: 0.30},
+    "Website": {3: 0.075, 6: 0.15, 9: 0.225, 12: 0.30},
+    "Telenor": {3: 0.075, 6: 0.15, 9: 0.225, 12: 0.30},
+    "Jazz": {3: 0.075, 6: 0.15, 9: 0.225, 12: 0.30},
+    "Ufone": {3: 0.075, 6: 0.15, 9: 0.225, 12: 0.30}
+}
 
-from helper import make_audio_file
+# Function to calculate monthly installment, revenue, cost, profit, and ROI
+def calculate_monthly_installment(Unit_price, Down_payment_percentage, Financing_type, Divide_Insurance, Divide_Processing_Fee, Divide_Weekly):
+    results = []
 
-# Use the non-interactive Agg backend, which is recommended as a
-# thread-safe backend.
-# See https://matplotlib.org/3.3.2/faq/howto_faq.html#working-with-threads.
-import matplotlib as mpl
-mpl.use("agg")
+    for tenure in [3, 6, 9, 12]:
+        # Divide_Insurance and Divide_Processing_Fee
+        monthly_insurance_amount = 0
+        monthly_processing_fee = 0
 
-##############################################################################
-# Workaround for the limited multi-threading support in matplotlib.
-# Per the docs, we will avoid using `matplotlib.pyplot` for figures:
-# https://matplotlib.org/3.3.2/faq/howto_faq.html#how-to-use-matplotlib-in-a-web-application-server.
-# Moreover, we will guard all operations on the figure instances by the
-# class-level lock in the Agg backend.
-##############################################################################
-from matplotlib.backends.backend_agg import RendererAgg
-_lock = RendererAgg.lock
+        insurance_rate = 0
 
+        # Find IN rates
+        for price_range, rate_map in insurance_rates.items():
+            lower_range, upper_range = price_range
+            if lower_range <= Unit_price <= upper_range:
+                if tenure in rate_map:
+                    insurance_rate = rate_map[tenure]
+                    break
 
-# -- Set page config
-apptitle = 'GW Quickview'
+        # Calculate insurance_amount
+        insurance_amount = insurance_rate * Unit_price
 
-st.set_page_config(page_title=apptitle, page_icon=":eyeglasses:")
+        # Calculate processing_fee
+        processing_fee = 0.025 * Unit_price
 
-# -- Default detector list
-detectorlist = ['H1','L1', 'V1']
+        # Calculate remaining amount
+        remaining_amount = Unit_price - (Down_payment_percentage / 100 * Unit_price)
 
-# Title the app
-st.title('Gravitational Wave Quickview')
+        # Calculate financing_fee
+        financing_fee = financing_fee_rates[Financing_type][tenure]
+        financing_fee_amount = remaining_amount * financing_fee
+        monthly_financing_fee = financing_fee_amount / tenure
 
-st.markdown("""
- * Use the menu at left to select data and set plot parameters
- * Your plots will appear below
-""")
+        # Divide insurance and processing fee by Tenure if selected
+        if Divide_Insurance:
+            monthly_insurance_amount = insurance_amount / tenure
+        if Divide_Processing_Fee:
+            monthly_processing_fee = processing_fee / tenure
 
-@st.cache_data(max_entries=5)   #-- Magic command to cache data
-def load_gw(t0, detector, fs=4096):
-    strain = TimeSeries.fetch_open_data(detector, t0-14, t0+14, sample_rate = fs, cache=False)
-    return strain
+        # Calculate total advance cost
+        total_advance_cost = 0
 
-@st.cache_data(max_entries=10)   #-- Magic command to cache data
-def get_eventlist():
-    allevents = datasets.find_datasets(type='events')
-    eventset = set()
-    for ev in allevents:
-        name = fetch_event_json(ev)['events'][ev]['commonName']
-        if name[0:2] == 'GW':
-            eventset.add(name)
-    eventlist = list(eventset)
-    eventlist.sort()
-    return eventlist
-    
-st.sidebar.markdown("## Select Data Time and Detector")
+        if not Divide_Insurance:
+            total_advance_cost += insurance_amount
+        if not Divide_Processing_Fee:
+            total_advance_cost += processing_fee
 
-# -- Get list of events
-eventlist = get_eventlist()
+        total_advance_cost += Down_payment_percentage / 100 * Unit_price
 
-#-- Set time by GPS or event
-select_event = st.sidebar.selectbox('How do you want to find data?',
-                                    ['By event name', 'By GPS'])
+        # Calculate monthly installment
+        installment = (monthly_financing_fee + (remaining_amount / tenure) +
+                       monthly_insurance_amount + monthly_processing_fee)
 
-if select_event == 'By GPS':
-    # -- Set a GPS time:        
-    str_t0 = st.sidebar.text_input('GPS Time', '1126259462.4')    # -- GW150914
-    t0 = float(str_t0)
+        # Divide monthly installment by 4 if selected
+        if Divide_Weekly:
+            weekly_installment = installment / 4
+        else:
+            weekly_installment = None
 
-    st.sidebar.markdown("""
-    Example times in the H1 detector:
-    * 1126259462.4    (GW150914) 
-    * 1187008882.4    (GW170817) 
-    * 1128667463.0    (hardware injection)
-    * 1132401286.33   (Koi Fish Glitch) 
-    """)
+        # Calculate total cost of ownership
+        total_cost_of_ownership = (installment * tenure) + total_advance_cost
 
-else:
-    chosen_event = st.sidebar.selectbox('Select Event', eventlist)
-    t0 = datasets.event_gps(chosen_event)
-    detectorlist = list(datasets.event_detectors(chosen_event))
-    detectorlist.sort()
-    st.subheader(chosen_event)
-    st.write('GPS:', t0)
-    
-    # -- Experiment to display masses
-    try:
-        jsoninfo = fetch_event_json(chosen_event)
-        for name, nameinfo in jsoninfo['events'].items():        
-            st.write('Mass 1:', nameinfo['mass_1_source'], 'M$_{\odot}$')
-            st.write('Mass 2:', nameinfo['mass_2_source'], 'M$_{\odot}$')
-            st.write('Network SNR:', int(nameinfo['network_matched_filter_snr']))
-            eventurl = 'https://gw-osc.org/eventapi/html/event/{}'.format(chosen_event)
-            st.markdown('Event page: {}'.format(eventurl))
-            st.write('\n')
-    except:
-        pass
+        results.append((tenure, total_advance_cost, installment, total_cost_of_ownership))
 
-    
-#-- Choose detector as H1, L1, or V1
-detector = st.sidebar.selectbox('Detector', detectorlist)
+    return results
 
-# -- Select for high sample rate data
-fs = 4096
-maxband = 1200
-high_fs = st.sidebar.checkbox('Full sample rate data')
-if high_fs:
-    fs = 16384
-    maxband = 2000
+# Streamlit app main function
+def main():
+    # Set the title
+    st.title("Financing Calculator")
 
+    # Input
+    Unit_price = st.number_input("Unit price", min_value=None, value=None, step=1.0)
+    Financing_type = st.selectbox("Select financing type", ("B2B", "General", "Telenor", "Jazz", "Ufone"))
+    Down_payment_percentage = st.number_input("Down payment percentage", min_value=0, max_value=100, value=None)
+    Divide_Insurance = st.checkbox("Divide insurance by tenure?")
+    Divide_Processing_Fee = st.checkbox("Divide processing fee by tenure?")
+    Divide_Weekly = st.checkbox("Divide monthly installment on a weekly basis?")
 
-# -- Create sidebar for plot controls
-st.sidebar.markdown('## Set Plot Parameters')
-dtboth = st.sidebar.slider('Time Range (seconds)', 0.1, 8.0, 1.0)  # min, max, default
-dt = dtboth / 2.0
+    # Calculate button
+    if st.button("Calculate"):
+        st.write(f"### Results for {Financing_type} Financing")
 
-st.sidebar.markdown('#### Whitened and band-passed data')
-whiten = st.sidebar.checkbox('Whiten?', value=True)
-freqrange = st.sidebar.slider('Band-pass frequency range (Hz)', min_value=10, max_value=maxband, value=(30,400))
+        # Display results for each tenure
+        results = calculate_monthly_installment(
+            Unit_price, Down_payment_percentage, Financing_type, Divide_Insurance, Divide_Processing_Fee, Divide_Weekly
+        )
 
+        for result in results:
+            (tenure, total_advance_cost, installment, total_cost_of_ownership) = result
 
-# -- Create sidebar for Q-transform controls
-st.sidebar.markdown('#### Q-tranform plot')
-vmax = st.sidebar.slider('Colorbar Max Energy', 10, 500, 25)  # min, max, default
-qcenter = st.sidebar.slider('Q-value', 5, 120, 5)  # min, max, default
-qrange = (int(qcenter*0.8), int(qcenter*1.2))
+            # Total Advance, Monthly Installment, and Total Cost of Ownership in bold and larger font size
+            st.write(f"**Tenure: {tenure} months**")
+            st.write(f"*Total Advance*: Rs **{total_advance_cost:,.2f}**")
+            st.write(f"*Monthly Installment*: Rs **{installment:,.2f}**")
+            st.write(f"*Total Cost of Ownership*: Rs **{total_cost_of_ownership:,.2f}**")
 
-#-- Create a text element and let the reader know the data is loading.
-strain_load_state = st.text('Loading data...this may take a minute')
-try:
-    strain_data = load_gw(t0, detector, fs)
-except:
-    st.warning('{0} data are not available for time {1}.  Please try a different time and detector pair.'.format(detector, t0))
-    st.stop()
-    
-strain_load_state.text('Loading data...done!')
-
-#-- Make a time series plot
-
-cropstart = t0-0.2
-cropend   = t0+0.1
-
-cropstart = t0 - dt
-cropend   = t0 + dt
-
-st.subheader('Raw data')
-center = int(t0)
-strain = deepcopy(strain_data)
-
-with _lock:
-    fig1 = strain.crop(cropstart, cropend).plot()
-    #fig1 = cropped.plot()
-    st.pyplot(fig1, clear_figure=True)
-
-
-# -- Try whitened and band-passed plot
-# -- Whiten and bandpass data
-st.subheader('Whitened and Band-passed Data')
-
-if whiten:
-    white_data = strain.whiten()
-    bp_data = white_data.bandpass(freqrange[0], freqrange[1])
-else:
-    bp_data = strain.bandpass(freqrange[0], freqrange[1])
-
-bp_cropped = bp_data.crop(cropstart, cropend)
-
-with _lock:
-    fig3 = bp_cropped.plot()
-    st.pyplot(fig3, clear_figure=True)
-
-# -- Allow data download
-download = {'Time':bp_cropped.times, 'Strain':bp_cropped.value}
-df = pd.DataFrame(download)
-csv = df.to_csv(index=False)
-b64 = base64.b64encode(csv.encode()).decode()  # some strings <-> bytes conversions necessary here
-fn =  detector + '-STRAIN' + '-' + str(int(cropstart)) + '-' + str(int(cropend-cropstart)) + '.csv'
-href = f'<a href="data:file/csv;base64,{b64}" download="{fn}">Download Data as CSV File</a>'
-st.markdown(href, unsafe_allow_html=True)
-
-# -- Make audio file
-st.audio(make_audio_file(bp_cropped), format='audio/wav')
-
-# -- Notes on whitening
-with st.expander("See notes"):
-    st.markdown("""
- * Whitening is a process that re-weights a signal, so that all frequency bins have a nearly equal amount of noise. 
- * A band-pass filter uses both a low frequency cutoff and a high frequency cutoff, and only passes signals in the frequency band between these values.
-
-See also:
- * [Signal Processing Tutorial](https://share.streamlit.io/jkanner/streamlit-audio/main/app.py)
-""")
-
-
-st.subheader('Q-transform')
-
-hq = strain.q_transform(outseg=(t0-dt, t0+dt), qrange=qrange)
-
-with _lock:
-    fig4 = hq.plot()
-    ax = fig4.gca()
-    fig4.colorbar(label="Normalised energy", vmax=vmax, vmin=0)
-    ax.grid(False)
-    ax.set_yscale('log')
-    ax.set_ylim(bottom=15)
-    st.pyplot(fig4, clear_figure=True)
-
-
-with st.expander("See notes"):
-
-    st.markdown("""
-A Q-transform plot shows how a signal’s frequency changes with time.
-
- * The x-axis shows time
- * The y-axis shows frequency
-
-The color scale shows the amount of “energy” or “signal power” in each time-frequency pixel.
-
-A parameter called “Q” refers to the quality factor.  A higher quality factor corresponds to a larger number of cycles in each time-frequency pixel.  
-
-For gravitational-wave signals, binary black holes are most clear with lower Q values (Q = 5-20), where binary neutron star mergers work better with higher Q values (Q = 80 - 120).
-
-See also:
-
- * [GWpy q-transform](https://gwpy.github.io/docs/stable/examples/timeseries/qscan.html)
- * [Reading Time-frequency plots](https://labcit.ligo.caltech.edu/~jkanner/aapt/web/math.html#tfplot)
- * [Shourov Chatterji PhD Thesis](https://dspace.mit.edu/handle/1721.1/34388)
-""")
-
-
-st.subheader("About this app")
-st.markdown("""
-This app displays data from LIGO, Virgo, and GEO downloaded from
-the Gravitational Wave Open Science Center at https://gwosc.org .
-
-
-You can see how this works in the [Quickview Jupyter Notebook](https://github.com/losc-tutorial/quickview) or 
-[see the code](https://github.com/jkanner/streamlit-dataview).
-
-""")
+if __name__ == "__main__":
+    main()
